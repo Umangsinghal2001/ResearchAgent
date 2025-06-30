@@ -205,3 +205,16 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+myenv
+
+.env
+
+
+test.ipynb
+
+research_agent.py
+research_agent_main.py
+
+publication_trend.html
+demo_notebook.py
