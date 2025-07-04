@@ -14,12 +14,16 @@ from langchain_community.utilities import SerpAPIWrapper, ArxivAPIWrapper
 from langchain_community.document_loaders import ArxivLoader, WebBaseLoader
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph.message import add_messages
+
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langchain_tavily import TavilySearch
+
 
 
 # Configure logging
@@ -28,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # State definition for the agent
 class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], operator.add]
+    messages: Annotated[List[BaseMessage],add_messages]
     query: str
     plan: Dict[str, Any]
     search_results: List[Dict[str, Any]]
@@ -85,29 +89,33 @@ class AIResearchAgent:
     def setup_tools(self, serpapi_key: str = None):
         """Setup search and retrieval tools"""
         # Web search tool
-        if serpapi_key:
-            search_wrapper = SerpAPIWrapper(serpapi_api_key=serpapi_key)
-            self.web_search_tool = Tool(
-                name="web_search",
-                description="Search the web for recent information and papers",
-                func=search_wrapper.run
-            )
-        else:
-            # Fallback to DuckDuckGo if SerpAPI not available
-            ddg_search = DuckDuckGoSearchAPIWrapper()
-            self.web_search_tool = Tool(
-                name="web_search",
-                description="Search the web for recent information and papers",
-                func=ddg_search.run
-            )
         
-        # ArXiv search tool
-        arxiv_wrapper = ArxivAPIWrapper(top_k_results=5)
-        self.arxiv_search_tool = Tool(
-            name="arxiv_search",
-            description="Search ArXiv for academic papers",
-            func=arxiv_wrapper.run
-        )
+        tool = TavilySearch(max_results=5)
+        self.tools = [tool]
+
+        # if serpapi_key:
+        #     search_wrapper = SerpAPIWrapper(serpapi_api_key=serpapi_key)
+        #     self.web_search_tool = Tool(
+        #         name="web_search",
+        #         description="Search the web for more information and research papers and datasets",
+        #         func=search_wrapper.run
+        #     )
+        # else:
+        #     # Fallback to DuckDuckGo if SerpAPI not available
+        #     ddg_search = DuckDuckGoSearchAPIWrapper()
+        #     self.web_search_tool = Tool(
+        #         name="web_search",
+        #         description="Search the web for more information and research papers and datasets",
+        #         func=ddg_search.run
+        #     )
+        
+        # # ArXiv search tool
+        # arxiv_wrapper = ArxivAPIWrapper(top_k_results=10)
+        # self.arxiv_search_tool = Tool(
+        #     name="arxiv_search",
+        #     description="Search ArXiv for academic papers",
+        #     func=arxiv_wrapper.run
+        # )
     
     def create_graph(self) -> StateGraph:
         """Create the LangGraph workflow"""
@@ -163,9 +171,7 @@ class AIResearchAgent:
         User Query: {query}
         
         Current Search Results Count: {results_count}
-        Current Iteration: {iteration}
-        Max Iterations: {max_iterations}
-        
+
         Previous Search Results Summary: {results_summary}
         
         Based on the query and current state, determine what actions to take next:
@@ -174,12 +180,6 @@ class AIResearchAgent:
         3. "load_documents" - Load and process found documents
         4. "end" - If enough information has been gathered
         
-        Provide your plan as JSON with the following structure:
-        {{
-            "next_action": "web_search|arxiv_search|load_documents|end",
-            "search_query": "specific search query if searching",
-            "reasoning": "explanation of why this action was chosen"
-        }}
         """)
         
         # Prepare context for planning
@@ -194,13 +194,10 @@ class AIResearchAgent:
         messages = planning_prompt.format_messages(
             query=state["query"],
             results_count=len(state["search_results"]),
-            iteration=state["iteration_count"],
-            max_iterations=state["max_iterations"],
             results_summary=results_summary
         )
-        
-        # Get plan from LLM
-        response = self.llm.with_structured_output(PlanningPromptOutput).invoke(messages)
+
+        response = self.llm.bind(self.tools).with_structured_output(PlanningPromptOutput).invoke(messages)
         
         try:
             plan = response.dict()
